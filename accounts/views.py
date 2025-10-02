@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import get_user_model
+import logging
 from .serializers import (
     UserRegistrationSerializer, 
     UserProfileSerializer, 
@@ -11,12 +12,25 @@ from .serializers import (
     UserListSerializer
 )
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 
 class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegistrationSerializer
     permission_classes = [permissions.AllowAny]
+    
+    def create(self, request, *args, **kwargs):
+        logger.info(f"Registration attempt with data: {request.data}")
+        serializer = self.get_serializer(data=request.data)
+        
+        if not serializer.is_valid():
+            logger.warning(f"Registration validation failed: {serializer.errors}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        user = serializer.save()
+        logger.info(f"User {user.username} registered successfully")
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class UserProfileViewSet(ModelViewSet):
     queryset = User.objects.all()

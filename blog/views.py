@@ -57,8 +57,13 @@ class PostViewSet(ModelViewSet):
         return queryset
     
     def get_serializer_class(self):
-        if self.action in ['create', 'update', 'partial_update']:
+        if self.action in ['update', 'partial_update']:
             return PostCreateUpdateSerializer
+        elif self.action == 'create':
+            # Use different serializers for request and response
+            if hasattr(self, 'request') and self.request.method == 'POST':
+                return PostCreateUpdateSerializer
+            return PostDetailSerializer
         elif self.action == 'retrieve':
             return PostDetailSerializer
         return PostListSerializer
@@ -67,6 +72,8 @@ class PostViewSet(ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
         elif self.action == 'create':
+            # Allow any authenticated user to attempt creation
+            # Role check happens in perform_create
             return [permissions.IsAuthenticated()]
         elif self.action in ['update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated()]
@@ -74,10 +81,23 @@ class PostViewSet(ModelViewSet):
     
     def perform_create(self, serializer):
         # Only authors and admins can create posts
-        if not self.request.user.is_author_role():
+        if not (self.request.user.is_author_role() or self.request.user.role in ['author', 'admin']):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only authors and admins can create posts")
+            raise PermissionDenied("Only authors and admins can create posts. Your current role is: " + self.request.user.role)
         serializer.save(author=self.request.user)
+        
+    def create(self, request, *args, **kwargs):
+        # Use PostCreateUpdateSerializer for validation
+        serializer = PostCreateUpdateSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        
+        # Return response using PostDetailSerializer
+        response_serializer = PostDetailSerializer(serializer.instance, context={'request': request})
+        from rest_framework import status
+        from rest_framework.response import Response
+        headers = self.get_success_headers(response_serializer.data)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
     def get_object(self):
         obj = super().get_object()
@@ -193,6 +213,74 @@ class CommentViewSet(ModelViewSet):
             return CommentCreateSerializer
         return CommentSerializer
     
+    def create(self, request, *args, **kwargs):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Comment creation request data: {request.data}")
+        logger.info(f"Content-Type: {request.content_type}")
+        logger.info(f"User: {request.user}")
+        
+        # Копируем данные для модификации
+        data = request.data.copy()
+        
+        # Поддержка поля 'content' как альтернативы 'text'
+        if 'content' in data and 'text' not in data:
+            data['text'] = data.pop('content')
+            logger.info(f"Converted 'content' to 'text': {data}")
+        
+        # Добавляем дополнительную валидацию
+        if not data.get('text'):
+            from rest_framework import status
+            from rest_framework.response import Response
+            return Response(
+                {'text': ['This field is required. You can use either "text" or "content".']}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not data.get('post'):
+            from rest_framework import status
+            from rest_framework.response import Response
+            return Response(
+                {'post': ['This field is required.']}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Обновляем request.data с исправленными данными
+        request._full_data = data
+        
+        # Выполняем создание
+        response = super().create(request, *args, **kwargs)
+        
+        # Если создание успешно, возвращаем полные данные комментария
+        if response.status_code == 201:
+            from rest_framework.response import Response
+            comment_id = response.data.get('id')
+            
+            # Пытаемся найти созданный комментарий
+            try:
+                from .models import Comment
+                if comment_id:
+                    # Используем ID если он есть
+                    created_comment = Comment.objects.select_related('user', 'post').get(id=comment_id)
+                else:
+                    # Альтернативный способ - последний созданный комментарий пользователя
+                    created_comment = Comment.objects.select_related('user', 'post').filter(
+                        user=request.user,
+                        post=data['post'],
+                        text=data['text']
+                    ).order_by('-created_at').first()
+                
+                # Возвращаем полные данные с помощью CommentSerializer
+                if created_comment:
+                    full_serializer = CommentSerializer(created_comment, context={'request': request})
+                    return Response(full_serializer.data, status=201)
+                
+            except Comment.DoesNotExist:
+                # Если не удалось найти комментарий, возвращаем оригинальный ответ
+                pass
+        
+        return response
+    
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
@@ -203,6 +291,11 @@ class CommentViewSet(ModelViewSet):
         return super().get_permissions()
     
     def perform_create(self, serializer):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Creating comment with data: {self.request.data}")
+        logger.info(f"User: {self.request.user}")
+        logger.info(f"Serializer data: {serializer.validated_data}")
         serializer.save(user=self.request.user)
     
     def get_object(self):

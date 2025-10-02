@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тест API комментариев</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .comment { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .user-info { font-weight: bold; color: #2196F3; }
+        .comment-text { margin: 10px 0; }
+        .debug { background: #f5f5f5; padding: 10px; margin: 5px 0; border-radius: 3px; }
+        .error { color: red; }
+        .success { color: green; }
+        button { padding: 10px 20px; margin: 5px; }
+        input[type="text"] { width: 300px; padding: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Тест API комментариев</h1>
+    
+    <div>
+        <h3>1. Авторизация</h3>
+        <button onclick="login()">Войти как meder</button>
+        <div id="login-status"></div>
+    </div>
+
+    <div>
+        <h3>2. Загрузить существующие комментарии</h3>
+        <button onclick="loadComments()">Загрузить комментарии</button>
+        <div id="comments-list"></div>
+    </div>
+
+    <div>
+        <h3>3. Создать новый комментарий</h3>
+        <input type="text" id="comment-input" placeholder="Текст комментария" value="Тест отображения пользователя">
+        <button onclick="createComment()">Создать комментарий</button>
+        <div id="create-result"></div>
+    </div>
+
+    <div>
+        <h3>4. Отладочная информация</h3>
+        <div id="debug-info"></div>
+    </div>
+
+    <script>
+        let accessToken = '';
+        const API_BASE = 'http://127.0.0.1:8000/api/v1';
+
+        async function login() {
+            try {
+                const response = await fetch(`${API_BASE}/accounts/auth/login/`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        username: 'meder',
+                        password: 'password123'
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    accessToken = data.access;
+                    document.getElementById('login-status').innerHTML = 
+                        '<span class="success">✅ Авторизация успешна</span>';
+                } else {
+                    document.getElementById('login-status').innerHTML = 
+                        '<span class="error">❌ Ошибка авторизации</span>';
+                }
+            } catch (error) {
+                document.getElementById('login-status').innerHTML = 
+                    `<span class="error">❌ Ошибка: ${error.message}</span>`;
+            }
+        }
+
+        async function loadComments() {
+            try {
+                const response = await fetch(`${API_BASE}/blog/comments/?post=711`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const comments = data.results || [];
+                    
+                    let html = `<h4>Загружено комментариев: ${comments.length}</h4>`;
+                    
+                    comments.slice(0, 3).forEach((comment, index) => {
+                        html += `
+                            <div class="comment">
+                                <div class="debug">
+                                    <strong>Комментарий ${index + 1} (ID: ${comment.id})</strong><br>
+                                    <strong>Raw user data:</strong> ${JSON.stringify(comment.user)}<br>
+                                    <strong>Text:</strong> ${comment.text}
+                                </div>
+                                <div class="user-info">
+                                    ${getUserDisplayName(comment.user)}
+                                </div>
+                                <div class="comment-text">${comment.text}</div>
+                            </div>
+                        `;
+                    });
+                    
+                    document.getElementById('comments-list').innerHTML = html;
+                } else {
+                    document.getElementById('comments-list').innerHTML = 
+                        '<span class="error">❌ Ошибка загрузки комментариев</span>';
+                }
+            } catch (error) {
+                document.getElementById('comments-list').innerHTML = 
+                    `<span class="error">❌ Ошибка: ${error.message}</span>`;
+            }
+        }
+
+        async function createComment() {
+            if (!accessToken) {
+                alert('Сначала авторизуйтесь!');
+                return;
+            }
+
+            const text = document.getElementById('comment-input').value;
+            if (!text) {
+                alert('Введите текст комментария!');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/blog/comments/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        content: text,  // Используем 'content' как на frontend
+                        post: 711
+                    })
+                });
+
+                if (response.ok) {
+                    const newComment = await response.json();
+                    
+                    document.getElementById('create-result').innerHTML = `
+                        <div class="comment">
+                            <div class="debug">
+                                <strong>Новый комментарий создан!</strong><br>
+                                <strong>ID:</strong> ${newComment.id}<br>
+                                <strong>Raw user data:</strong> ${JSON.stringify(newComment.user)}<br>
+                                <strong>Text:</strong> ${newComment.text}
+                            </div>
+                            <div class="user-info">
+                                ${getUserDisplayName(newComment.user)}
+                            </div>
+                            <div class="comment-text">${newComment.text}</div>
+                        </div>
+                    `;
+                    
+                    // Обновляем отладочную информацию
+                    updateDebugInfo(newComment);
+                } else {
+                    const errorText = await response.text();
+                    document.getElementById('create-result').innerHTML = 
+                        `<span class="error">❌ Ошибка создания: ${response.status} - ${errorText}</span>`;
+                }
+            } catch (error) {
+                document.getElementById('create-result').innerHTML = 
+                    `<span class="error">❌ Ошибка: ${error.message}</span>`;
+            }
+        }
+
+        function getUserDisplayName(user) {
+            // Это функция которая должна быть в вашем frontend
+            if (!user) {
+                return '<span class="error">👤 АНОНИМ (нет данных пользователя)</span>';
+            }
+
+            // Проверяем различные варианты
+            const username = user.username || '';
+            const firstName = user.first_name || '';
+            const lastName = user.last_name || '';
+            const role = user.role || '';
+
+            // Формируем отображаемое имя
+            let displayName = '';
+            if (firstName && lastName) {
+                displayName = `${firstName} ${lastName}`;
+            } else if (firstName) {
+                displayName = firstName;
+            } else if (username) {
+                displayName = username;
+            } else {
+                displayName = 'Аноним';
+            }
+
+            return `👤 ${displayName} (${role}) [${username}]`;
+        }
+
+        function updateDebugInfo(comment) {
+            const user = comment.user;
+            let debugHtml = '<h4>🔍 Анализ данных пользователя:</h4>';
+            
+            debugHtml += `<div class="debug">`;
+            debugHtml += `<strong>Проверки:</strong><br>`;
+            debugHtml += `• comment.user существует: ${user ? '✅' : '❌'}<br>`;
+            
+            if (user) {
+                debugHtml += `• user.username: ${user.username ? '✅ "' + user.username + '"' : '❌ отсутствует'}<br>`;
+                debugHtml += `• user.first_name: ${user.first_name ? '✅ "' + user.first_name + '"' : '❌ отсутствует'}<br>`;
+                debugHtml += `• user.last_name: ${user.last_name ? '✅ "' + user.last_name + '"' : '❌ отсутствует'}<br>`;
+                debugHtml += `• user.role: ${user.role ? '✅ "' + user.role + '"' : '❌ отсутствует'}<br>`;
+                debugHtml += `• user.avatar: ${user.avatar ? '✅ "' + user.avatar + '"' : '❌ null/отсутствует'}<br>`;
+                
+                debugHtml += `<br><strong>Полный объект user:</strong><br>`;
+                debugHtml += `<pre>${JSON.stringify(user, null, 2)}</pre>`;
+            }
+            debugHtml += `</div>`;
+            
+            document.getElementById('debug-info').innerHTML = debugHtml;
+        }
+
+        // Автоматически логинимся при загрузке страницы
+        window.onload = function() {
+            login();
+        };
+    </script>
+</body>
+</html>
