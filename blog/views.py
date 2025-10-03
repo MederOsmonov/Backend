@@ -81,9 +81,14 @@ class PostViewSet(ModelViewSet):
     
     def perform_create(self, serializer):
         # Only authors and admins can create posts
-        if not (self.request.user.is_author_role() or self.request.user.role in ['author', 'admin']):
+        if not self.request.user.is_authenticated:
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only authors and admins can create posts. Your current role is: " + self.request.user.role)
+            raise PermissionDenied("Authentication required to create posts")
+            
+        if not self.request.user.is_author_role():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only authors and admins can create posts. Your current role is: " + str(getattr(self.request.user, 'role', 'unknown')))
+        
         serializer.save(author=self.request.user)
         
     def create(self, request, *args, **kwargs):
