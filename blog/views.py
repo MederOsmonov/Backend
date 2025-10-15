@@ -72,18 +72,14 @@ class PostViewSet(ModelViewSet):
         if self.action in ['list', 'retrieve']:
             return [permissions.AllowAny()]
         elif self.action == 'create':
-            # Allow any authenticated user to attempt creation
-            # Role check happens in perform_create
+            # Any authenticated user can create posts
             return [permissions.IsAuthenticated()]
         elif self.action in ['update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated()]
         return super().get_permissions()
     
     def perform_create(self, serializer):
-        # Only authors and admins can create posts
-        if not (self.request.user.is_author_role() or self.request.user.role in ['author', 'admin']):
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only authors and admins can create posts. Your current role is: " + self.request.user.role)
+        # Any authenticated user can create posts
         serializer.save(author=self.request.user)
         
     def create(self, request, *args, **kwargs):
